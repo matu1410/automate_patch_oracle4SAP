@@ -1,0 +1,85 @@
+- name: Validate OPatch Source Path
+  fail:
+    msg: "ERROR: The 'opatch_source_path' variable is required! Pass it with '-e opatch_source_path=/u01/stage/p6880880_*.zip'"
+  when: opatch_source_path is not defined or opatch_source_path | length == 0
+
+- name: Ensure OPatch File Exists
+  become: yes
+  stat:
+    path: "{{ opatch_source_path }}"
+  register: opatch_file
+
+- name: Fail if OPatch File Does Not Exist
+  fail:
+    msg: "ERROR: OPatch file not found at {{ opatch_source_path }}!"
+  when: not opatch_file.stat.exists
+
+- name: Detect ORACLE_HOME for Grid Infrastructure
+  become: yes
+  shell: grep -E "^\+ASM[0-9]*:" /etc/oratab | cut -d':' -f2 | head -n 1
+  register: oracle_home
+  changed_when: false
+
+- name: Debug Detected ORACLE_HOME
+  debug:
+    msg: "Detected ORACLE_HOME: {{ oracle_home.stdout }}"
+
+- name: Detect ORACLE_HOME Owner
+  become: yes
+  shell: stat -c "%U" "$(echo {{ oracle_home.stdout }}/OPatch | tr -d '[:space:]')"
+  register: oracle_owner
+  changed_when: false
+
+- name: Debug ORACLE_HOME Owner
+  debug:
+    msg: "Detected ORACLE_HOME owner: {{ oracle_owner.stdout }}"
+
+- name: Ensure OPatch Directory Exists
+  become: yes
+  become_user: "{{ oracle_owner.stdout }}"
+  file:
+    path: "{{ oracle_home.stdout }}/OPatch"
+    state: directory
+    mode: '0755'
+
+- name: Get Opatch actual version
+  become: yes
+  become_user: "{{ oracle_owner.stdout }}"
+  shell: |
+     {{ oracle_home.stdout }}/OPatch/opatch version >> /tmp/automatic_patching_oracle4sap.log
+  args:
+    removes: "{{ oracle_home.stdout }}/OPatch"
+
+- name: Backup Existing OPatch
+  become: yes
+  become_user: "{{ oracle_owner.stdout }}"
+  shell: |
+    BACKUP_DIR="{{ oracle_home.stdout }}/OPatch_backup_$(date +%Y%m%d %H%M%S)"
+    TAR_FILE="$BACKUP_DIR.tar.gz"
+    mv "{{ oracle_home.stdout }}/OPatch" "$BACKUP_DIR"
+    tar -czf "$TAR_FILE" -C "{{ oracle_home.stdout }}" "$(basename "$BACKUP_DIR")"
+    rm -rf "$BACKUP_DIR"
+  args:
+    removes: "{{ oracle_home.stdout }}/OPatch"
+
+- name: Extract New OPatch Version
+  become: yes
+  become_user: "{{ oracle_owner.stdout }}"
+  unarchive:
+    src: "{{ opatch_source_path }}"
+    dest: "{{ oracle_home.stdout }}"
+    remote_src: yes
+
+- name: Validate OPatch Version
+  become: yes
+  become_user: "{{ oracle_owner.stdout }}"
+  shell: |
+    printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+    printf "[INFO] : GET NEW VERSION AFTER UPDATE \n" >> /tmp/automatic_patching_oracle4sap.log
+    printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+    {{ oracle_home.stdout }}/OPatch/opatch version >> /tmp/automatic_patching_oracle4sap.log
+  register: opatch_version
+
+- name: Debug OPatch Version
+  debug:
+    msg: "Updated OPatch Version: {{ opatch_version.stdout }}"

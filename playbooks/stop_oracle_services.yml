@@ -1,0 +1,119 @@
+- name: Stop Oracle Database Services
+  hosts: oracle_servers
+  become: yes
+  vars:
+    action: "shutdown"  # Change to "startup" to start the database
+
+  tasks:
+    
+    - name: Capture Running Oracle Instances
+      become: yes
+      become_user: "{{ db_user.stdout }}"
+      shell: |
+        ps -ef | grep ora_pmon_ | grep -v grep | awk -F'_' '{print $3}'
+      register: oracle_sids
+      tags : capture-oracle-sid
+
+    - name: Store Oracle SIDs as a List
+      set_fact:
+        oracle_sid_list: "{{ oracle_sids.stdout_lines }}"
+    
+    - name: Filter SID List if a Target SID is Specified
+      set_fact:
+        filtered_sid_list: >-
+          {{ oracle_target_sids.split(',') if oracle_target_sids is defined 
+          else oracle_sid_list.stdout_lines | default([]) }}
+    
+    - name: Check Oracle Database Status for Each Instance
+      become: yes
+      become_user: oracle
+      loop: "{{ oracle_sid_list }}"
+      shell: |
+        rm -f /tmp/automatic_patching_oracle4sap.log
+        export ORACLE_SID={{ item }}
+        export ORACLE_HOME=$(grep "^$ORACLE_SID:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Capturing Oracle instance status for SID $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+
+        timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log
+        select instance_name, host_name, version_Full, status, database_status from v\$instance;
+        exit;
+        EOF
+      register: instance_status
+      ignore_errors: yes
+      tags : check-db-status
+    
+    - name: Shutdown Oracle Database for Each Instance
+      become_user: oracle
+      loop: "{{ filtered_sid_list }}"
+      shell: |
+        export ORACLE_SID={{ item }}
+        export ORACLE_HOME=$(grep "^$ORACLE_SID:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Stopping Oracle Database $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+        echo "[INFO] Initiating shutdown for instance: $ORACLE_SID" 
+        timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF 
+        shutdown immediate;
+        exit;
+        EOF
+
+        echo "[INFO] Waiting for $ORACLE_SID to fully stop..."
+        for i in {1..120}; do
+          if ! ps -ef | grep "[p]mon_$ORACLE_SID" > /dev/null; then
+            echo "[INFO] Instance $ORACLE_SID is fully shut down."
+            printf "[INFO]: Oracle Database is Fully shut down $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap.log
+            exit 0
+          fi
+          echo "[INFO] Instance $ORACLE_SID is still shutting down... Waiting 10s."
+          sleep 5
+        done
+
+        echo "[ERROR] Timeout reached. Instance $ORACLE_SID may not have shut down properly."
+        exit 1
+      when: action == "shutdown"
+      register: shutdown_result
+      tags: shutdown-oracle-database
+
+    - name: Stop Oracle High Availability Services (HAS) and ASM
+      become: yes
+      become_user: root
+      shell: |
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Stopping HAS services               \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+        crsctl stop has >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        EXIT_CODE=$?
+
+        echo "[INFO] Checking HAS status after stop..." >> /tmp/automatic_patching_oracle4sap.log
+        sleep 10
+
+        if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
+          echo "[ERROR] HAS is still running after stop attempt!" >> /tmp/automatic_patching_oracle4sap.log
+          exit 1
+        else
+          echo "[INFO] HAS has successfully stopped." >> /tmp/automatic_patching_oracle4sap.log
+          exit 0
+        fi
+        sleep 60
+      when: action == "shutdown"
+      register: has_shutdown_result
+      tags: shutdown-has-services
+    
+    
+
+
+

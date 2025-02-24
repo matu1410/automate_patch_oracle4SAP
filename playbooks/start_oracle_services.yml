@@ -1,0 +1,107 @@
+- name: Start Oracle Database Services
+  hosts: oracle_servers
+  become: yes
+  vars:
+    action: "startup"  # Change to "startup" to start the database
+
+  tasks:
+
+    - name: Capture Oracle Database Instances from /etc/oratab
+      become: yes
+      become_user: oracle
+      shell: awk -F':' '$1 !~ /^#/ && $1 !~ /^\+ASM$/ && $2 !~ /N/ && $1 != "" {print $1}' /etc/oratab
+      register: oracle_sid_list
+
+    - name: Set Target Database List
+      set_fact:
+        filtered_sid_list: >-
+          {{ oracle_target_sids.split(',') if oracle_target_sids is defined 
+          else oracle_sid_list.stdout_lines | default([]) }}
+
+ 
+    - name: Start Oracle High Availability Services (HAS) and ASM
+      become: yes
+      become_user: root
+      shell: |
+        chmod 777 /tmp/automatic_patching_oracle4sap.log
+        export ORACLE_SID='+ASM'
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Start Oracle HAS $HOSTNAME \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+
+        crsctl start has >> /tmp/automatic_patching_oracle4sap.log 2>&1
+
+        echo "[INFO] Waiting for HAS to fully start..." >> /tmp/automatic_patching_oracle4sap.log
+        for i in {1..30}; do
+          if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
+            echo "[INFO] HAS and ASM are fully started." >> /tmp/automatic_patching_oracle4sap.log
+            break
+          fi
+          echo "[INFO] HAS is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap.log
+          sleep 10
+        done
+
+        sleep 60
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Info CRS Services \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+        crsctl stat res -t >> /tmp/automatic_patching_oracle4sap.log 2>&1  
+
+        if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
+          echo "[INFO] HAS has successfully started." >> /tmp/automatic_patching_oracle4sap.log
+          exit 0
+        else
+          echo "[ERROR] Timeout reached. HAS may not have started properly." >> /tmp/automatic_patching_oracle4sap.log
+          exit 1
+        fi      
+        
+        exit 1
+      when: action == "startup"
+      register: has_startup_result
+      tags: startup-has-service
+    
+    
+    - name: Start Oracle Databases
+      become: yes
+      become_user: oracle
+      loop: "{{ filtered_sid_list }}"
+      shell: |
+        export ORACLE_SID={{ item }}
+        export ORACLE_HOME=$(grep "^{{ item }}:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH#
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Starting Database {{ item }} \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+        $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        startup;
+        exit;
+        EOF#
+
+        if echo "$STARTUP_OUTPUT" | grep -q "ORA-01081"; then
+          echo "[WARNING] Database {{ item }} is already running, skipping startup." >> /tmp/automatic_patching_oracle4sap.log
+          exit 0
+        fi
+
+        echo "[INFO] Waiting for {{ item }} to fully start..." >> /tmp/automatic_patching_oracle4sap.log
+        for i in {1..30}; do
+          if ps -ef | grep "[p]mon_{{ item }}" > /dev/null; then
+            echo "[INFO] Instance {{ item }} is fully started." >> /tmp/automatic_patching_oracle4sap.log
+            exit 0
+          fi
+          echo "[INFO] Instance {{ item }} is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap.log
+          sleep 10
+        done#
+        echo "[ERROR] Timeout reached. Instance {{ item }} may not have started properly." >> /tmp/automatic_patching_oracle4sap.log
+        exit 1
+        sleep 30
+      when: action == "startup"
+      register: startup_result
+      tags: startup-oracle-database
+

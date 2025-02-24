@@ -1,0 +1,25 @@
+- name: Check if Oracle ASM is installed and running
+  shell: |
+    if ps -ef | grep -v grep | grep -q asm_pmon_+ASM; then
+      echo "ASM is running"
+    elif [ -f "/etc/oracle/ocr.loc" ]; then
+      echo "ASM is installed but not running"
+    else
+      echo "ASM is not installed"
+    fi
+  register: asm_status
+- name: Check if Oracle Database is running
+  shell: |
+    ps -ef | grep -v grep | grep pmon | awk -F'_' '{print $3}'
+  register: db_status
+- name: Fail if ASM is installed but not running
+  fail:
+    msg: "ASM is installed but not running! Aborting process."
+  when: "'ASM is installed but not running' in asm_status.stdout"
+- name: Fail if no databases are running
+  fail:
+    msg: "No running Oracle databases found! Aborting process."
+  when: db_status.stdout | length == 0
+- name: Debug - ASM and Database Validation Passed
+  debug:
+    msg: "ASM and Database are both running. Proceeding with the process."

@@ -1,0 +1,17 @@
+# Oracle Service Management Log
+# Date: {{ ansible_date_time.iso8601 }}
+# Host: {{ inventory_hostname }}
+
+## Step 1: Capturing Oracle instance status
+Instance SID: {{ oracle_sid | default('N/A') }}
+Instance Status: {{ instance_status | default('Unknown') }}
+
+## Step 2: Shutdown Process
+Shutdown Started: {{ shutdown_started | default('N/A') }}
+Shutdown Status: {{ shutdown_result | default('Not executed') }}
+
+## Step 3: Startup Process
+Startup Started: {{ startup_started | default('N/A') }}
+Startup Status: {{ startup_result | default('Not executed') }}
+
+# End of Log

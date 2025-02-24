@@ -1,0 +1,195 @@
+- name: Apply Grid Patch
+  hosts: oracle_servers
+  become: yes
+  vars:
+    grid_patch_path: "/u01/stage"
+    file_name: "{{ file_name | default('') }}"
+    opatch_source_path: "/path/to/opatch.zip"  # Deve ser passado ao rodar o playbook
+    file_list: "{{ file_name.split(',') if file_name | length > 0 else [] }}"  # Garante que file_list seja uma lista válida
+    action: "patch-grid"  # Change to "startup" to start the database
+
+  tasks:
+    - name: Start Logfile with all steps and informations
+      become: yes
+      become_user: root
+      shell: |
+         mv /tmp/automatic_patching_oracle4sap.log /tmp/automatic_patching_oracle4sap_$(date +"%Y_%m_%d_%I_%M_%p").log
+         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+         printf "[INFO] : Starting Apply Patch in Oracle Grid Infrastructure \n" >> /tmp/automatic_patching_oracle4sap.log
+         printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+         chmod 777 /tmp/automatic_patching_oracle4sap.log
+      when: action =="patch-grid"
+    
+    #validate path and fles for pach in oracle grid infrastructure
+    - name: Fail if `grid_patch_path` or `file_name` Are Not Provided
+      fail:
+        msg: "ERROR: 'grid_patch_path' and at least one 'file_name' must be provided! Example: -e grid_patch_path=/u01/stage file_name=p37257886_190000_Linux-x86-64.zip,p34567890_190000_Linux-x86-64.zip"
+      when: grid_patch_path | length == 0 or file_name | length == 0
+
+    - name: Debug Variables
+      debug:
+        msg: "Grid Patch Path: {{ grid_patch_path }}, Files: {{ file_list }}"
+
+    - name: Verify Each Patch File Exists
+      become: yes
+      stat:
+        path: "{{ grid_patch_path }}/{{ item }}"
+      register: patch_file_check
+      loop: "{{ file_list }}"
+
+    - name: Fail if Any Patch File Does Not Exist
+      fail:
+        msg: "ERROR: Some patch files are missing! Missing files: {{ missing_files }}"
+      vars:
+        missing_files: "{{ file_list | difference(patch_file_check.results | selectattr('stat.exists', 'equalto', true) | map(attribute='item') | list) }}"
+      when: missing_files | length > 0
+
+    - name: Validate Oracle Services Before Applying Patch
+      import_tasks: tasks/validate_service_status.yml
+
+    - name: Update OPatch on Grid Binary
+      import_tasks: tasks/update_opatch_grid.yml
+      vars:
+        opatch_source_path: "{{ opatch_source_path }}"
+      tags: update_opatch_grid
+
+    - name: Detect ORACLE_HOME for Grid Infrastructure
+      become: yes
+      shell: grep "^\+ASM:" /etc/oratab | cut -d':' -f2
+      register: oracle_home
+      changed_when: false
+
+    - name: Debug Detected ORACLE_HOME for Grid
+      debug:
+        msg: "Detected ORACLE_HOME: {{ oracle_home.stdout }}"
+
+    - name: Detect Oracle Owner from PMON Process
+      become: yes
+      shell: ps -eo user,args | grep "[p]mon_+ASM" | awk '{print $1}' | head -n 1
+      register: oracle_owner
+      changed_when: false
+
+    - name: Debug Detected Oracle Owner
+      debug:
+        msg: "Detected Oracle Owner from PMON: {{ oracle_owner.stdout }}"
+
+    - name: Fail if Oracle Owner is Not Found
+      fail:
+        msg: "ERROR: Could not detect Oracle Owner from PMON process!"
+      when: oracle_owner.stdout | length == 0
+
+    - name: Ensure Patch File Exists
+      become: yes
+      stat:
+        path: "{{ grid_patch_path }}"
+      register: patch_file
+
+    - name: Fail if Patch File Does Not Exist
+      fail:
+        msg: "ERROR: Patch file not found at {{ grid_patch_path }}!"
+      when: not patch_file.stat.exists
+
+    - name: Unzip Each Grid Patch Inside Path
+      become: yes
+      become_user: "{{ oracle_owner.stdout }}"
+      shell: |
+        echo "[INFO] Extracting patch from {{ grid_patch_path }}/{{ item }} to {{ grid_patch_path }}" >> /tmp/automatic_patching_oracle4sap.log
+        unzip -o "{{ grid_patch_path }}/{{ item }}" -d "{{ grid_patch_path }}"
+      args:
+        chdir: "{{ grid_patch_path }}"
+      loop: "{{ file_list }}"
+
+#    - name: Unzip Grid Patch
+#      become: yes
+#      become_user: "{{ oracle_owner.stdout }}"
+#      shell: |
+#        PATCH_DIR="{{ grid_patch_path | regex_replace('.zip$', '') }}"
+#        ZIP_FILE="{{ grid_patch_path }}"
+#        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+#        printf "[INFO] : Extracting patch from $ZIP_FILE to $PATCH_DIR \n" >> /tmp/automatic_patching_oracle4sap.log
+#        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+#        mkdir -p "$PATCH_DIR"
+#        unzip -o "$ZIP_FILE" -d "$PATCH_DIR"
+#      args:
+#        creates: "{{ grid_patch_path | regex_replace('.zip$', '') }}"
+
+    - name: Extract Patch Directory Name from File Name
+      set_fact:
+        patch_directories: "{{ file_list | map('regex_replace', '^p([0-9]+)_.*$', '\\1') | list }}"
+
+    - name: Debug Extracted Patch Directories
+      debug:
+        msg: "Extracted Patch Directories: {{ patch_directories }}"
+   
+    - name: Analyze Opatch Apply in Grid Infrastructure Binaries
+      become: yes
+      become_user: root
+      shell: |
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export ORACLE_SID='+ASM'
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        if [ -z "{{ grid_patch_path }}" ]; then
+          echo "[ERROR] Patch path not provided! Exiting." >> /tmp/grid_patch.log
+          exit 1
+        fi
+
+        PATCH_DIR="{{ grid_patch_path }}/{{ patch_directories | first }}"
+     
+        printf "\n========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO] : Starting analyze process \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        
+        cd $PATCH_DIR
+        $ORACLE_HOME/OPatch/opatchauto apply -oh $ORACLE_HOME -analyze >> /tmp/automatic_patching_oracle4sap.log
+
+        if grep -q "OPatchAuto successful" /tmp/automatic_patching_oracle4sap.log; then
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[Yes !] Patch analyzed successfully!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+        else
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[ERROR] Patch analyzed Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          exit 1
+        fi
+      when: grid_patch_path is defined
+      register: patch_result
+      tags: opatch_grid_analyze
+
+#apply grid patch
+    - name: Apply Opatch Apply in Grid Infrastructure Binaries
+      become: yes
+      become_user: root
+      shell: |
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export ORACLE_SID='+ASM'
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        if [ -z "{{ grid_patch_path }}" ]; then
+          echo "[ERROR] Patch path not provided! Exiting." >> /tmp/grid_patch.log
+          exit 1
+        fi
+
+        PATCH_DIR="{{ grid_patch_path }}/{{ patch_directories | first }}"
+     
+        printf "\n========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO] : Starting Apply process \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        
+        cd $PATCH_DIR
+        $ORACLE_HOME/OPatch/opatchauto apply -oh $ORACLE_HOME >> /tmp/automatic_patching_oracle4sap.log
+
+        if grep -q "OPatchAuto successful" /tmp/automatic_patching_oracle4sap.log; then
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[Yes !] Patch Apply successfully!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+        else
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[ERROR] Patch Apply  Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          exit 1
+        fi
+      when: grid_patch_path | length > 0
+      register: patch_result
+      tags: opatch_grid_apply
