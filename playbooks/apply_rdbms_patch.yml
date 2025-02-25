@@ -377,15 +377,16 @@
         . /tmp/env_{{ item }}.env
         env ORACLE_HOME={{ OHRDBMS }} ORACLE_SID=$ORACLE_SID {{ OHRDBMS }}/sapbundle/catsbp >> /tmp/automatic_patching_oracle4sap.log
 
-        if awk '/Overall Status: COMPLETE, WARNINGS/ || /Overall Status: COMPLETE/' /tmp/automatic_patching_oracle4sap.log; then
+        if grep -q "Overall Status: INCOMPLETE" /tmp/automatic_patching_oracle4sap.log; then
           echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[Yes !] Catsbp Apply successfully!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[ERROR] Patch Apply Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[INFO] Fix Up this error and run the catsbp manually" >> /tmp/automatic_patching_oracle4sap.log
           echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
         else
           echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[ERROR] Patch Apply Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[Yes!] catsbp completed successfully" >> /tmp/automatic_patching_oracle4sap.log
           echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          exit 1
+          exit 0
         fi
       with_items: "{{ oracle_sid }}"
       become_user: "{{ db_user.stdout }}"
