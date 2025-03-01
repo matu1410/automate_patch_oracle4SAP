@@ -182,12 +182,18 @@
     - name: Debug UID of ASM user
       debug:
         msg: "ASM User UID: {{ asm_user_uid.stdout }}"
-
+    
     - name: Fix ownership and permissions for oradism
       shell: |
           chown {{ asm_user_uid.stdout }} {{ IHRDBMS }}/bin/oradism && chmod u+rw {{ IHRDBMS }}/bin/oradism
       become: yes
       become_user: root
+    
+    - name: Get Oradism permissions after change
+      shell: |
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
+      become_user: "{{ asm_user.stdout }}"
 
     - name: Apply Grid Patch on Grid Home
       shell: |
@@ -211,6 +217,12 @@
         echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap.log
         chown root {{ OHGRID }}/bin/oradism && chmod 4750 {{ OHGRID }}/bin/oradism
       become_user: root
+    
+    - name: Get Oradism permissions
+      shell: |
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
+      become_user: "{{ asm_user.stdout }}"
     
     - name: Run root HAS rdbms
       shell: |
@@ -237,3 +249,19 @@
 
         {{ OHGRID }}/crs/install/roothas.sh -postpatch >> /tmp/automatic_patching_oracle4sap.log
       become_user: root
+
+    - name: Get actual version of ASM
+      shell: |
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Get Actual Version of +ASM" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        $ORACLE_HOME/bin/sqlplus -s / as sysasm <<EOF >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        select * from v\$version;
+        exit;
+        EOF#
+      become_user: "{{ asm_user.stdout }}"

@@ -131,17 +131,9 @@
         echo "[INFO] PFILE backup created: $PFILE_BACKUP_DIR/init{{ item }}.ora.bkp_$TIMESTAMP" >> /tmp/automatic_patching_oracle4sap.log
       with_items: "{{ oracle_sid }}"
       become_user: "{{ db_user.stdout }}"
-      register: pfile_backup_result
-
-    - name: Debug PFILE backup result
-      debug:
-        msg: "PFILE backup result for {{ item.item }}: {{ item.stdout }}"
-      loop: "{{ pfile_backup_result.results }}"
-      when: item.rc == 0
 
     - name: Generate goldimage after apply patch in rdbms
       shell: |
-
         . /tmp/env_{{ item }}.env
         echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
         echo "[INFO] Generate GoldImage for $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
@@ -155,7 +147,6 @@
     
     - name: Stop Oracle database for Apply Patch
       shell: |
-
         . /tmp/env_{{ item }}.env
         echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
         echo "[INFO] Stopping Oracle database $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
@@ -185,7 +176,6 @@
     
     - name: Stop CRS for single instance
       shell: |
-
         export ORACLE_SID='+ASM'
         export ORAENV_ASK=NO
         export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
@@ -242,16 +232,28 @@
       changed_when: false
       become_user: "{{ db_user.stdout }}"
     
-    - name: Get ASM user UID
-      shell: "id -u {{ db_user }}"
+    - name: Get RDBMS user UID
+      shell: "id -u {{ db_user.stdout }}"
       register: db_user_uid
       changed_when: false
+    
+    - name: Debug UID of ASM user
+      debug:
+        msg: "RDBMS User UID: {{ db_user.stdout }}"
         
-    - name: Temporary change Oradism to superuser
+    - name: Fix ownership and permissions for oradism
       shell: |
         echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap.log
         chown {{ db_user_uid.stdout }} {{ IHRDBMS }}/bin/oradism && chmod u+rw {{ IHRDBMS }}/bin/oradism
       become_user: root
+    
+    - name: Get Oradism permissions After change
+      shell: |
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
+      register: command_output
+      changed_when: false
+      become_user: "{{ db_user.stdout }}"
     
     - name: Check if MOpatch has already been applied
       shell: |
@@ -262,7 +264,6 @@
     
     - name: Start apply patch in RDBMS
       shell: |
-
         . /tmp/env_{{ item }}.env
         echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
         echo "[INFO] Start Oracle apply patch in $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
@@ -289,7 +290,6 @@
 
     - name: Start CRS for single instance
       shell: |
-
         export ORACLE_SID='+ASM'
         export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
         export PATH=$ORACLE_HOME/bin:$PATH
@@ -332,7 +332,6 @@
 
     - name: Start Oracle database for Apply CATSBP
       shell: |
-
         . /tmp/env_{{ item }}.env
         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
         printf "[INFO]: Starting Database {{ item }} \n" >> /tmp/automatic_patching_oracle4sap.log
@@ -372,7 +371,6 @@
 
     - name: Apply Oracle Database CATSBP
       shell: |
-
         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
         printf "[INFO]: Starting CATSBP {{ item }} \n" >> /tmp/automatic_patching_oracle4sap.log
         printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
@@ -403,6 +401,12 @@
         echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap.log
         chown root {{ IHRDBMS }}/bin/oradism && chmod 4750 {{ IHRDBMS }}/bin/oradism
       become_user: root
+    
+    - name: Get Oradism permissions
+      shell: |
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
+      become_user: "{{ asm_user.stdout }}"
 
     - name: Execute fix.sql script
       shell: |
