@@ -1,0 +1,229 @@
+- name: Apply Patch to GRID SAP
+  hosts: all
+  become: yes
+  vars:
+    db_patch_path: ""
+    db_patch_file: ""  # List patch file
+    opatch_file: ""
+    c: "" #SBP MOPATCH code, included in README file
+    IHRDBMS: ""
+    OHGRID: ""
+    SBPFUSER: ""
+    action: "patch-grid"
+  
+  tasks:
+    - name: Start Logfile with all steps and informations
+      become: yes
+      become_user: root
+      shell: |
+         mv /tmp/automatic_patching_oracle4sap.log /tmp/automatic_patching_oracle4sap_$(date +"%Y_%m_%d_%I_%M_%p").log
+         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+         printf "[INFO] : Starting Apply Patch in Oracle GRID \n" >> /tmp/automatic_patching_oracle4sap.log
+         printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+         chmod 777 /tmp/automatic_patching_oracle4sap.log
+      when: action =="patch-grid"
+    
+    - name: Validate if patch files exist in the specified directory
+      ansible.builtin.stat:
+        path: "{{ db_patch_path }}/{{ item }}"
+      register: patch_files_check
+      with_items: "{{ db_patch_file }}"
+
+    - name: Fail if any patch file is missing
+      ansible.builtin.fail:
+        msg: "Patch file {{ item.item }} is missing in {{ db_patch_path }}"
+      with_items: "{{ patch_files_check.results }}"
+      when: not item.stat.exists
+    
+    - name: Retrieve ASM instance user
+      shell: |
+        ps -ef | grep pmon | grep -E '\+ASM' | grep -v grep | awk '{print $1}' | sort -u
+      register: asm_user
+      changed_when: false
+
+    - name: Debug ASM instance user
+      debug:
+        msg: "ASM is running under user: {{ asm_user.stdout | default('Not Found') }}"
+    
+    - name: Change OHGRID for Instance Owner
+      shell: chown {{ asm_user.stdout }}:oinstall {{ OHGRID }}
+      become_user: root
+
+    - name: Backup existing OPatch directory
+      shell: |
+        echo "[INFO] Backup OPAtch " >> /tmp/automatic_patching_oracle4sap.log
+        mv {{ IHRDBMS }}/OPatch {{ IHRDBMS }}/OPatch-pre-SBP_$(date +%Y%m%d_%H%M%S)
+      become_user: "{{ asm_user.stdout }}"
+
+    - name: Unzip new OPatch
+      shell: |
+        echo "[INFO] Extract OPAtch in {{ IHRDBMS }}" >> /tmp/automatic_patching_oracle4sap.log
+        unzip -qd {{ IHRDBMS }} {{ db_patch_path }}/{{ opatch_file }} -x SIGNATURE.SMF
+      become_user: "{{ asm_user.stdout }}"
+    
+    - name: Validate OPatch Version
+      shell: |
+        echo "[INFO] Validate OPAtch version" >> /tmp/automatic_patching_oracle4sap.log
+        {{ IHRDBMS }}/OPatch/opatch version >> /tmp/automatic_patching_oracle4sap.log
+      become_user: "{{ asm_user.stdout }}"
+
+    - name: Check if MOpatch backup already exists
+      stat:
+        path: "{{ IHRDBMS }}/MOPatch-pre-{{ mopatch_code }}"
+      register: mopatch_backup
+
+    - name: Unzip MOpatch
+      shell: |
+        echo "[INFO] Unzip SAP MOpatch" >> /tmp/automatic_patching_oracle4sap.log
+        unzip -qd {{ IHRDBMS }}/sapbundle {{ db_patch_path }}/{{ db_patch_file }} "{{ mopatch_code }}/MOPatch/*"
+        test -d {{ IHRDBMS }}/MOPatch && mv {{ IHRDBMS }}/MOPatch {{ IHRDBMS }}/MOPatch-pre-{{ mopatch_code }}
+        mv {{ IHRDBMS }}/sapbundle/{{ mopatch_code }}/MOPatch {{ IHRDBMS }}/MOPatch
+      args:
+        executable: /bin/bash
+      become_user: "{{ asm_user.stdout }}"
+      when: not mopatch_backup.stat.exists
+    
+    - name: Preventing Orachk problems
+      shell: |
+        echo "[INFO] Preventing Orachk Problems" >> /tmp/automatic_patching_oracle4sap.log
+        rm -f {{ IHRDBMS }}/suptools/orachk
+      args:
+        executable: /bin/bash
+      become_user: root
+    
+    - name: Generate goldimage after apply patch in rdbms
+      shell: |
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Generate GoldImage for GRID" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        
+        {{ OHGRID }}/gridSetup.sh -createGoldImage -silent -destinationLocation {{ db_patch_path }} >> /tmp/automatic_patching_oracle4sap.log
+      become_user: "{{ asm_user.stdout }}"
+      async: 5400  # Tempo máximo de execução em segundos (1:30 hora)
+      poll: 60  # Verifica a cada 60 segundos se o comando finalizou
+      register: goldimage_result
+      tags: generate_gold_image 
+    
+    - name: Stop CRS for single instance
+      shell: |
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Stopping HAS services               \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+
+        crsctl stop has >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        EXIT_CODE=$?
+
+        echo "[INFO] Checking HAS status after stop..." >> /tmp/automatic_patching_oracle4sap.log
+        sleep 10
+
+        if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
+          echo "[ERROR] HAS is still running after stop attempt!" >> /tmp/automatic_patching_oracle4sap.log
+          exit 1
+        else
+          echo "[INFO] HAS has successfully stopped." >> /tmp/automatic_patching_oracle4sap.log
+          exit 0
+        fi
+        sleep 180
+      become_user: root
+    
+    - name: Precheck for apply grid patch
+      shell: |
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "[INFO]: Starting Pre-Patch               \n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        
+        {{ OHGRID }}/crs/install/roothas.sh -prepatch >> /tmp/automatic_patching_oracle4sap.log
+
+        if grep -q "CLSRSC-671: Pre-patch steps for patching GI home successfully completed." /tmp/automatic_patching_oracle4sap.log; then
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[Yes !] Pre-patch successfully!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+        else
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[ERROR] Pre PatchFailed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          exit 1
+        fi
+      become_user: root
+
+    - name: Check if Oracle binary exists
+      stat:
+        path: "{{ IHRDBMS }}/bin/oracle"
+      register: oracle_bin_check
+
+    - name: Check if Oracle binary is in use
+      shell: "/usr/sbin/fuser {{ IHRDBMS }}/bin/oracle"
+      register: fuser_check
+      ignore_errors: true
+      changed_when: false
+      when: oracle_bin_check.stat.exists
+
+    - name: Get ASM user UID
+      shell: "id -u {{ asm_user }}"
+      register: asm_user_uid
+      changed_when: false
+
+    - name: Fix ownership and permissions for oradism
+      shell: |
+          chown {{ asm_user_uid.stdout }} {{ IHRDBMS }}/bin/oradism && chmod u+rw {{ IHRDBMS }}/bin/oradism"
+      become: yes
+      become_user: root
+
+    - name: Apply Grid Patch on Grid Home
+      shell: |
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Apply Patch in GRID Home" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        env ORACLE_HOME={{ OHGRID }} {{ OHGRID }}/MOPatch/mopatch.sh -v -s {{ db_patch_path }}/{{ db_patch_file }} >> /tmp/automatic_patching_oracle4sap.log
+      become_user: "{{ asm_user.stdout }}"
+      async: 5400  # Tempo máximo de execução em segundos (1:30 hora)
+      poll: 60  # Verifica a cada 60 segundos se o comando finalizou
+      register: patch_grid_apply
+      tags: patch_grid_apply 
+    
+    - name: Temporary change Oradism to superuser after patch 
+      shell: |
+        echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap.log
+        chown root {{ OHGRID }}/bin/oradism && chmod 4750 {{ OHGRID }}/bin/oradism
+      become_user: root
+    
+    - name: Run root HAS rdbms
+      shell: |
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Running root has_add_rdbms" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        {{ OHGRID }}/rdbms/install/rootadd_rdbms.sh >> /tmp/automatic_patching_oracle4sap.log
+      become_user: root
+    
+    - name: Run Pos Patch
+      shell: |
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Running postpatch" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        export ORACLE_SID='+ASM'
+        export ORAENV_ASK=NO
+        export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
+        export PATH=$ORACLE_HOME/bin:$PATH
+
+        {{ OHGRID }}/crs/install/roothas.sh -postpatch >> /tmp/automatic_patching_oracle4sap.log
+      become_user: root
