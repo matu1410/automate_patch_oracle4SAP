@@ -8,7 +8,7 @@
     
     - name: Capture Running Oracle Instances
       become: yes
-      become_user: "{{ db_user.stdout }}"
+      become_user: root
       shell: |
         ps -ef | grep ora_pmon_ | grep -v grep | awk -F'_' '{print $3}'
       register: oracle_sids

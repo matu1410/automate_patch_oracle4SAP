@@ -18,11 +18,11 @@
       become: yes
       become_user: root
       shell: |
-         mv /tmp/automatic_patching_oracle4sap.log /tmp/automatic_patching_oracle4sap_$(date +"%Y_%m_%d_%I_%M_%p").log
-         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-         printf "[INFO] : Starting Apply Patch in Oracle RDBMS \n" >> /tmp/automatic_patching_oracle4sap.log
-         printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
-         chmod 777 /tmp/automatic_patching_oracle4sap.log
+         mv /tmp/automatic_patching_oracle4sap_rdbms.log /tmp/automatic_patching_oracle4sap_rdbms_$(date +"%Y_%m_%d_%I_%M_%p").log
+         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+         printf "[INFO] : Starting Apply Patch in Oracle RDBMS \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+         printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+         chmod 777 /tmp/automatic_patching_oracle4sap_rdbms.log
       when: action =="patch-rdbms"
 
     - name: Ensure patch directory exists
@@ -57,20 +57,20 @@
     
     - name: Backup existing OPatch directory
       shell: |
-        echo "[INFO] Backup OPAtch " >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Backup OPAtch " >> /tmp/automatic_patching_oracle4sap_rdbms.log
         mv {{ IHRDBMS }}/OPatch {{ IHRDBMS }}/OPatch-pre-SBP_$(date +%Y%m%d_%H%M%S)
       become_user: "{{ db_user.stdout }}"
 
     - name: Unzip new OPatch
       shell: |
-        echo "[INFO] Extract OPAtch in {{ IHRDBMS }}" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Extract OPAtch in {{ IHRDBMS }}" >> /tmp/automatic_patching_oracle4sap_rdbms.log
         unzip -qd {{ IHRDBMS }} {{ db_patch_path }}/{{ opatch_file }} -x SIGNATURE.SMF
       become_user: "{{ db_user.stdout }}"
     
     - name: Validate OPatch Version
       shell: |
-        echo "[INFO] Validate OPAtch version" >> /tmp/automatic_patching_oracle4sap.log
-        {{ IHRDBMS }}/OPatch/opatch version >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Validate OPAtch version" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        {{ IHRDBMS }}/OPatch/opatch version >> /tmp/automatic_patching_oracle4sap_rdbms.log
       become_user: "{{ db_user.stdout }}"
     
     - name: Check if MOpatch backup already exists
@@ -80,7 +80,7 @@
 
     - name: Unzip MOpatch
       shell: |
-        echo "[INFO] Unzip SAP MOpatch" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Unzip SAP MOpatch" >> /tmp/automatic_patching_oracle4sap_rdbms.log
         unzip -qd {{ IHRDBMS }}/sapbundle {{ db_patch_path }}/{{ db_patch_file }} "{{ mopatch_code }}/MOPatch/*"
         test -d {{ IHRDBMS }}/MOPatch && mv {{ IHRDBMS }}/MOPatch {{ IHRDBMS }}/MOPatch-pre-{{ mopatch_code }}
         mv {{ IHRDBMS }}/sapbundle/{{ mopatch_code }}/MOPatch {{ IHRDBMS }}/MOPatch
@@ -108,11 +108,11 @@
     - name: Check Current Status for Oracle Database before Apply Patch
       shell: |
         . /tmp/env_{{ item }}.env
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
-        echo "[INFO] Checking Current Status for $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "[INFO] Checking Current Status for $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log
+        timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap_rdbms.log
         select instance_name, host_name, version_Full, status, database_status from v\$instance;
         exit;
         EOF
@@ -128,18 +128,18 @@
         create pfile='$PFILE_BACKUP_DIR/init{{ item }}.ora.bkp_$TIMESTAMP' from spfile;
         exit;
         EOF
-        echo "[INFO] PFILE backup created: $PFILE_BACKUP_DIR/init{{ item }}.ora.bkp_$TIMESTAMP" >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] PFILE backup created: $PFILE_BACKUP_DIR/init{{ item }}.ora.bkp_$TIMESTAMP" >> /tmp/automatic_patching_oracle4sap_rdbms.log
       with_items: "{{ oracle_sid }}"
       become_user: "{{ db_user.stdout }}"
 
     - name: Generate goldimage after apply patch in rdbms
       shell: |
         . /tmp/env_{{ item }}.env
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
-        echo "[INFO] Generate GoldImage for $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "[INFO] Generate GoldImage for $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
         
-        $ORACLE_HOME/runInstaller -createGoldImage -silent -destinationLocation {{ db_patch_path }} >> /tmp/automatic_patching_oracle4sap.log
+        $ORACLE_HOME/runInstaller -createGoldImage -silent -destinationLocation {{ db_patch_path }} >> /tmp/automatic_patching_oracle4sap_rdbms.log
       with_items: "{{ oracle_sid }}"
       become_user: "{{ db_user.stdout }}"
       register: goldimage_result
@@ -148,9 +148,9 @@
     - name: Stop Oracle database for Apply Patch
       shell: |
         . /tmp/env_{{ item }}.env
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
-        echo "[INFO] Stopping Oracle database $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "[INFO] Stopping Oracle database $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
         echo "[INFO] Initiating shutdown for instance: $ORACLE_SID" 
         timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF 
@@ -162,7 +162,7 @@
         for i in {1..120}; do
           if ! ps -ef | grep "[p]mon_$ORACLE_SID" > /dev/null; then
             echo "[INFO] Instance $ORACLE_SID is fully shut down."
-            printf "[INFO]: Oracle Database is Fully shut down $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap.log
+            printf "[INFO]: Oracle Database is Fully shut down $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
             exit 0
           fi
           echo "[INFO] Instance $ORACLE_SID is still shutting down... Waiting 10s."
@@ -181,21 +181,21 @@
         export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
         export PATH=$ORACLE_HOME/bin:$PATH
 
-        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "[INFO]: Stopping HAS services               \n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "[INFO]: Stopping HAS services               \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        crsctl stop has >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        crsctl stop has >> /tmp/automatic_patching_oracle4sap_rdbms.log 2>&1
         EXIT_CODE=$?
 
-        echo "[INFO] Checking HAS status after stop..." >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Checking HAS status after stop..." >> /tmp/automatic_patching_oracle4sap_rdbms.log
         sleep 10
 
         if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
-          echo "[ERROR] HAS is still running after stop attempt!" >> /tmp/automatic_patching_oracle4sap.log
+          echo "[ERROR] HAS is still running after stop attempt!" >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 1
         else
-          echo "[INFO] HAS has successfully stopped." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[INFO] HAS has successfully stopped." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 0
         fi
         sleep 180
@@ -226,8 +226,8 @@
     
     - name: Get Oradism permissions
       shell: |
-        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
-        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap_rdbms.log
       register: command_output
       changed_when: false
       become_user: "{{ db_user.stdout }}"
@@ -243,21 +243,21 @@
         
     - name: Fix ownership and permissions for oradism
       shell: |
-        echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap_rdbms.log
         chown {{ db_user_uid.stdout }} {{ IHRDBMS }}/bin/oradism && chmod u+rw {{ IHRDBMS }}/bin/oradism
       become_user: root
     
     - name: Get Oradism permissions After change
       shell: |
-        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
-        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap_rdbms.log
       register: command_output
       changed_when: false
       become_user: "{{ db_user.stdout }}"
     
     - name: Check if MOpatch has already been applied
       shell: |
-        grep -q "MOPatch completed successfully" /tmp/automatic_patching_oracle4sap.log
+        grep -q "MOPatch completed successfully" /tmp/automatic_patching_oracle4sap_rdbms.log
       register: patch_check
       ignore_errors: true
       changed_when: false
@@ -265,22 +265,23 @@
     - name: Start apply patch in RDBMS
       shell: |
         . /tmp/env_{{ item }}.env
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
-        echo "[INFO] Start Oracle apply patch in $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "[INFO] Start Oracle apply patch in $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        env ORACLE_HOME={{ IHRDBMS }} {{ IHRDBMS }}/MOPatch/mopatch.sh -v -s {{ db_patch_path }}/{{ db_patch_file }} >> /tmp/automatic_patching_oracle4sap.log
+        env ORACLE_HOME={{ IHRDBMS }} {{ IHRDBMS }}/MOPatch/mopatch.sh -v -s {{ db_patch_path }}/{{ db_patch_file }} >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        if grep -q "MOPatch completed successfully" /tmp/automatic_patching_oracle4sap.log; then
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[Yes !] Patch Apply successfully!" >> /tmp/automatic_patching_oracle4sap.log
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+        if grep -q "MOPatch completed successfully" /tmp/automatic_patching_oracle4sap_rdbms.log; then
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "[Yes !] Patch Apply successfully!" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
         else
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[ERROR] Patch Apply Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "[ERROR] Patch Apply Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 1
         fi
+      with_items: "{{ oracle_sid }}"
       become_user: "{{ db_user.stdout }}"
       async: 5400  # Tempo máximo de execução em segundos (1:30 hora)
       poll: 60  # Verifica a cada 60 segundos se o comando finalizou
@@ -294,35 +295,35 @@
         export ORACLE_HOME=$(grep "^\\+ASM:" /etc/oratab | cut -d':' -f2)
         export PATH=$ORACLE_HOME/bin:$PATH
 
-        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "[INFO]: Start Oracle HAS $HOSTNAME \n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "[INFO]: Start Oracle HAS $HOSTNAME \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
 
-        crsctl start has >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        crsctl start has >> /tmp/automatic_patching_oracle4sap_rdbms.log 2>&1
 
-        echo "[INFO] Waiting for HAS to fully start..." >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Waiting for HAS to fully start..." >> /tmp/automatic_patching_oracle4sap_rdbms.log
         for i in {1..30}; do
           if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
-            echo "[INFO] HAS and ASM are fully started." >> /tmp/automatic_patching_oracle4sap.log
+            echo "[INFO] HAS and ASM are fully started." >> /tmp/automatic_patching_oracle4sap_rdbms.log
             break
           fi
-          echo "[INFO] HAS is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[INFO] HAS is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           sleep 10
         done
 
         sleep 60
-        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "[INFO]: Info CRS Services \n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "[INFO]: Info CRS Services \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        crsctl stat res -t >> /tmp/automatic_patching_oracle4sap.log 2>&1  
+        crsctl stat res -t >> /tmp/automatic_patching_oracle4sap_rdbms.log 2>&1  
 
         if crsctl check has | grep -q "CRS-4638: Oracle High Availability Services is online"; then
-          echo "[INFO] HAS has successfully started." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[INFO] HAS has successfully started." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 0
         else
-          echo "[ERROR] Timeout reached. HAS may not have started properly." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[ERROR] Timeout reached. HAS may not have started properly." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 1
         fi      
 
@@ -333,30 +334,30 @@
     - name: Start Oracle database for Apply CATSBP
       shell: |
         . /tmp/env_{{ item }}.env
-        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "[INFO]: Starting Database {{ item }} \n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "[INFO]: Starting Database {{ item }} \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap_rdbms.log 2>&1
         startup;
         exit;
         EOF#
 
         if echo "$STARTUP_OUTPUT" | grep -q "ORA-01081"; then
-          echo "[WARNING] Database {{ item }} is already running, skipping startup." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[WARNING] Database {{ item }} is already running, skipping startup." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 0
         fi
 
-        echo "[INFO] Waiting for {{ item }} to fully start..." >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Waiting for {{ item }} to fully start..." >> /tmp/automatic_patching_oracle4sap_rdbms.log
         for i in {1..30}; do
           if ps -ef | grep "[p]mon_{{ item }}" > /dev/null; then
-            echo "[INFO] Instance {{ item }} is fully started." >> /tmp/automatic_patching_oracle4sap.log
+            echo "[INFO] Instance {{ item }} is fully started." >> /tmp/automatic_patching_oracle4sap_rdbms.log
             exit 0
           fi
-          echo "[INFO] Instance {{ item }} is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[INFO] Instance {{ item }} is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           sleep 10
         done#
-        echo "[ERROR] Timeout reached. Instance {{ item }} may not have started properly." >> /tmp/automatic_patching_oracle4sap.log
+        echo "[ERROR] Timeout reached. Instance {{ item }} may not have started properly." >> /tmp/automatic_patching_oracle4sap_rdbms.log
         exit 1
         sleep 30
       with_items: "{{ oracle_sid }}"
@@ -364,29 +365,29 @@
     
     - name: Check if CATSBP has already been applied
       shell: |
-        grep -q "catsbp completed successfully" /tmp/automatic_patching_oracle4sap.log
+        grep -q "catsbp completed successfully" /tmp/automatic_patching_oracle4sap_rdbms.log
       register: catsbp_check
       ignore_errors: true
       changed_when: false
 
     - name: Apply Oracle Database CATSBP
       shell: |
-        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "[INFO]: Starting CATSBP {{ item }} \n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "[INFO]: Starting CATSBP {{ item }} \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
         . /tmp/env_{{ item }}.env
-        env ORACLE_HOME={{ OHRDBMS }} ORACLE_SID=$ORACLE_SID {{ OHRDBMS }}/sapbundle/catsbp >> /tmp/automatic_patching_oracle4sap.log
+        env ORACLE_HOME={{ OHRDBMS }} ORACLE_SID=$ORACLE_SID {{ OHRDBMS }}/sapbundle/catsbp >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        if grep -q "Overall Status: INCOMPLETE" /tmp/automatic_patching_oracle4sap.log; then
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[ERROR] Patch Apply Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[INFO] Fix Up this error and run the catsbp manually" >> /tmp/automatic_patching_oracle4sap.log
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+        if grep -q "Overall Status: INCOMPLETE" /tmp/automatic_patching_oracle4sap_rdbms.log; then
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "[ERROR] Patch Apply Failed,Plese check logs and run again!" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "[INFO] Fix Up this error and run the catsbp manually" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
         else
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
-          echo "[Yes!] catsbp completed successfully" >> /tmp/automatic_patching_oracle4sap.log
-          echo "=========================================" >> /tmp/automatic_patching_oracle4sap.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "[Yes!] catsbp completed successfully" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+          echo "=========================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 0
         fi
       with_items: "{{ oracle_sid }}"
@@ -398,21 +399,21 @@
 
     - name: Temporary change Oradism to olduser
       shell: |
-        echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Change Oradism Permission " >> /tmp/automatic_patching_oracle4sap_rdbms.log
         chown root {{ IHRDBMS }}/bin/oradism && chmod 4750 {{ IHRDBMS }}/bin/oradism
       become_user: root
     
     - name: Get Oradism permissions
       shell: |
-        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap.log
-        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap.log
-      become_user: "{{ asm_user.stdout }}"
+        echo "[INFO] Oradism Permission." >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        ls -al {{ IHRDBMS }}/bin/oradism  >> /tmp/automatic_patching_oracle4sap_rdbms.log
+      become_user: "{{ db_user.stdout }}"
 
     - name: Execute fix.sql script
       shell: |
         . /tmp/env_{{ item }}.env
-        echo "[INFO] Running fix.sql for {{ item }}" >> /tmp/automatic_patching_oracle4sap.log
-        sqlplus / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Running fix.sql for {{ item }}" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        sqlplus / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap_rdbms.log
         @{{ db_patch_path }}/fix.sql
         EXIT;
         EOF
@@ -422,11 +423,10 @@
 
     - name: Stop Oracle database for fix up script
       shell: |
-
         . /tmp/env_{{ item }}.env
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
-        echo "[INFO] Stopping Oracle database $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "[INFO] Stopping Oracle database $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
         echo "[INFO] Initiating shutdown for instance: $ORACLE_SID" 
         timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF 
@@ -438,7 +438,7 @@
         for i in {1..120}; do
           if ! ps -ef | grep "[p]mon_$ORACLE_SID" > /dev/null; then
             echo "[INFO] Instance $ORACLE_SID is fully shut down."
-            printf "[INFO]: Oracle Database is Fully shut down $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap.log
+            printf "[INFO]: Oracle Database is Fully shut down $ORACLE_SID\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
             exit 0
           fi
           echo "[INFO] Instance $ORACLE_SID is still shutting down... Waiting 10s."
@@ -453,32 +453,31 @@
     
     - name: Start Oracle database after fix up scripts
       shell: |
-
         . /tmp/env_{{ item }}.env
-        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "[INFO]: Starting Database {{ item }} \n" >> /tmp/automatic_patching_oracle4sap.log
-        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap.log
+        printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "[INFO]: Starting Database {{ item }} \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log 2>&1
+        $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap_rdbms.log 2>&1
         startup;
         exit;
         EOF#
 
         if echo "$STARTUP_OUTPUT" | grep -q "ORA-01081"; then
-          echo "[WARNING] Database {{ item }} is already running, skipping startup." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[WARNING] Database {{ item }} is already running, skipping startup." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           exit 0
         fi
 
-        echo "[INFO] Waiting for {{ item }} to fully start..." >> /tmp/automatic_patching_oracle4sap.log
+        echo "[INFO] Waiting for {{ item }} to fully start..." >> /tmp/automatic_patching_oracle4sap_rdbms.log
         for i in {1..30}; do
           if ps -ef | grep "[p]mon_{{ item }}" > /dev/null; then
-            echo "[INFO] Instance {{ item }} is fully started." >> /tmp/automatic_patching_oracle4sap.log
+            echo "[INFO] Instance {{ item }} is fully started." >> /tmp/automatic_patching_oracle4sap_rdbms.log
             exit 0
           fi
-          echo "[INFO] Instance {{ item }} is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap.log
+          echo "[INFO] Instance {{ item }} is still starting... Waiting 10s." >> /tmp/automatic_patching_oracle4sap_rdbms.log
           sleep 10
         done#
-        echo "[ERROR] Timeout reached. Instance {{ item }} may not have started properly." >> /tmp/automatic_patching_oracle4sap.log
+        echo "[ERROR] Timeout reached. Instance {{ item }} may not have started properly." >> /tmp/automatic_patching_oracle4sap_rdbms.log
         exit 1
         sleep 30
       with_items: "{{ oracle_sid }}"
@@ -486,15 +485,22 @@
 
     - name: Check Current Status for Oracle Database before Apply Patch
       shell: |
-
         . /tmp/env_{{ item }}.env
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
-        echo "[INFO] Version of  apply patch $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap.log
-        echo "=============================================" >> /tmp/automatic_patching_oracle4sap.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "[INFO] Version of  apply patch $ORACLE_SID" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+        echo "=============================================" >> /tmp/automatic_patching_oracle4sap_rdbms.log
 
-        timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap.log
+        timeout 10s $ORACLE_HOME/bin/sqlplus -s / as sysdba <<EOF >> /tmp/automatic_patching_oracle4sap_rdbms.log
         select patch_id, status, Action,Action_time from dba_registry_sqlpatch order by action_time;
         exit;
         EOF
       with_items: "{{ oracle_sid }}"
       become_user: "{{ db_user.stdout }}"
+    
+    - name: Finish  Logfile
+      become: yes
+      become_user: root
+      shell: |
+         printf "\n=========================================\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+         printf "[INFO] : Apply Patch on RDBMS Finished \n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
+         printf "=========================================\n\n" >> /tmp/automatic_patching_oracle4sap_rdbms.log
